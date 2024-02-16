@@ -1,9 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-import sys
 
-sys.path.append('/usr/local/lib/python2.7/site-packages')
 def main():
     st.title("Camera App with OpenCV and Streamlit")
 
