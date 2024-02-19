@@ -1,5 +1,6 @@
 import streamlit as st
 import cv2
+from PIL import Image, ImageDraw
 
 def main():
     st.title("Camera App with OpenCV and Streamlit")
@@ -32,16 +33,18 @@ def main():
     # Button to capture a photo
     if st.button("Capture Photo"):
         if start_camera:
-            # Capture a frame when the button is clicked
             _, frame = camera.read()
-
-            # Save the captured frame as an image
-            filename = "captured_photo.jpg"
-            cv2.imwrite(filename, cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-
-            # Display the captured photo
-            st.success("Photo captured successfully!")
-            st.image(filename, channels="RGB", use_column_width=True)
+            if frame is not None:
+                # Save the captured frame as an image
+                filename = "captured_photo.jpg"
+                image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                image.save(filename)
+    
+                # Display the captured photo
+                st.success("Photo captured successfully!")
+                st.image(filename, channels="RGB", use_column_width=True)
+            else:
+                st.warning("Warning: Could not read a frame from the camera.")
         else:
             st.warning("Start the camera before capturing a photo.")
 
