@@ -1,6 +1,5 @@
 import streamlit as st
 import cv2
-import numpy as np
 
 def main():
     st.title("Camera App with OpenCV and Streamlit")
@@ -8,17 +7,25 @@ def main():
     # Checkbox to start/stop the camera
     start_camera = st.checkbox("Start Camera")
 
-    # Display live camera feed when the checkbox is selected
+    # Check if the camera is opened successfully
     if start_camera:
-        st.sidebar.header("Camera Settings")
         camera = cv2.VideoCapture(0)  # 0 corresponds to the default camera
 
-        # Adjust camera settings through sidebar sliders
+        if not camera.isOpened():
+            st.error("Error: Could not open the camera.")
+            st.stop()
+
+        st.sidebar.header("Camera Settings")
         brightness = st.sidebar.slider("Brightness", 0, 100, 50)
         camera.set(10, brightness)
 
-        # Read and display camera frames
+        # Check if the frame is read successfully
         _, frame = camera.read()
+        if frame is None:
+            st.warning("Warning: Could not read a frame from the camera.")
+            st.stop()
+
+        # Display the frame
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         st.image(frame, channels="RGB", use_column_width=True)
 
