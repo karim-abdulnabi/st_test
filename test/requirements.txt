@@ -1,2 +1,5 @@
 numpy
-opencv-python-headless
+streamlit
+streamlit-webrtc
+opencv-python
+Pillow
