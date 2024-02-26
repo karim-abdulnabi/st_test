@@ -1,2 +1,2 @@
 numpy
-streamlit-webrtc
+opencv-python-headless
