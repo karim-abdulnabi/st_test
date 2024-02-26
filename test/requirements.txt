@@ -1,3 +1,4 @@
+numby
 streamlit
 opencv-python
 Pillow
