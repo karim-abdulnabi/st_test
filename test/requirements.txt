@@ -1,4 +1,4 @@
-aiortc==0.9.28
-uvloop==0.15.3
+aiortc
+uvloop
 
 
