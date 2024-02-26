@@ -1,43 +1,47 @@
+import asyncio
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import cv2
 from PIL import Image
+from aiortc.contrib.media import MediaPlayer
 
-class VideoTransformer(VideoTransformerBase):
-    def transform(self, frame):
-        # Modify this method to perform any additional processing on the frame if needed
-        return frame
+async def consume_audio(video_stream, audio_stream):
+    while True:
+        frame = await video_stream.recv()
+        audio_frame = await audio_stream.recv()
+
+        # Perform any additional processing on the frame if needed
+        processed_frame = frame
+
+        # Display the frame using st.video
+        st.video(processed_frame, channels="BGR", format="jpeg")
 
 def main():
-    st.title("Camera App with Streamlit and OpenCV")
+    st.title("Camera App with Streamlit and aiortc")
 
     # Checkbox to start/stop the camera
     start_camera = st.checkbox("Start Camera")
 
-    # Display the webcam feed using webrtc_streamer
-    webrtc_ctx = webrtc_streamer(key="example", video_transformer_factory=VideoTransformer)
-
     if start_camera:
-        if webrtc_ctx.video_transformer:
-            # Get the latest frame from the webcam
-            frame = webrtc_ctx.video_transformer.frame
+        player = MediaPlayer(video_device=0, audio_device=None)
+        video_stream = player.video
+        audio_stream = player.audio
 
-            # Display the frame
-            st.image(frame, channels="BGR", use_column_width=True)
+        # Create an asyncio task to consume the audio and video streams
+        asyncio.create_task(consume_audio(video_stream, audio_stream))
 
         # Button to capture a photo
         if st.button("Capture Photo"):
-            if webrtc_ctx.video_transformer:
-                # Save the captured frame as an image
-                filename = "captured_photo.jpg"
-                image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                image.save(filename)
+            # Get the latest frame from the video stream
+            frame, _ = video_stream.recv()
 
-                # Display the captured photo
-                st.success("Photo captured successfully!")
-                st.image(filename, channels="RGB", use_column_width=True)
-            else:
-                st.warning("Start the camera before capturing a photo.")
+            # Save the captured frame as an image
+            filename = "captured_photo.jpg"
+            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            image.save(filename)
+
+            # Display the captured photo
+            st.success("Photo captured successfully!")
+            st.image(filename, channels="RGB", use_column_width=True)
 
 if __name__ == "__main__":
     main()
