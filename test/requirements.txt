@@ -1,13 +1,4 @@
 numpy
 streamlit
 streamlit-webrtc
-av
-mediapipe
-tensorflow-cpu
-pyttsx3
-translate
-SpeechRecognition
-youtube_dl
-scikit-learn
-comtypes
-ffmpy 
+
