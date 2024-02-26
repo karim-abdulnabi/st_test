@@ -1,48 +1,23 @@
-import streamlit as st
 import cv2
-from PIL import Image
+from streamlit_webrtc import VideoTransformerBase, webrtc_streamer
 
-def main():
-    st.title("Camera App with Streamlit")
+faceCascade = cv2.CascadeClassifier(cv2.haarcascades+'haarcascade_frontalface_default.xml')
 
-    # Create a button to start the camera
-    start_camera = st.button("Start Camera")
 
-    if start_camera:
-        # Open the camera
-        cap = cv2.VideoCapture(0)
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.i = 0
 
-        if not cap.isOpened():
-            st.error("Error: Could not open the camera.")
-            st.stop()
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = faceCascade.detectMultiScale(gray, 1.3, 5)
+        i =self.i+1
+        for (x, y, w, h) in faces:
+            cv2.rectangle(img, (x, y), (x + w, y + h), (95, 207, 30), 3)
+            cv2.rectangle(img, (x, y - 40), (x + w, y), (95, 207, 30), -1)
+            cv2.putText(img, 'F-' + str(i), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
 
-        # Create a button to capture a photo
-        capture_button = st.button("Capture Photo")
+        return img
 
-        # Display the video feed
-        while start_camera:
-            ret, frame = cap.read()
-
-            if not ret:
-                st.error("Error: Could not read a frame from the camera.")
-                break
-
-            # Display the frame using st.image
-            st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_column_width=True)
-
-            # Check if the capture button is clicked
-            if capture_button:
-                # Save the captured frame as an image
-                filename = "captured_photo.jpg"
-                image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                image.save(filename)
-
-                # Display the captured photo
-                st.success("Photo captured successfully!")
-                st.image(filename, channels="RGB", use_column_width=True)
-
-        # Release the camera when the app stops
-        cap.release()
-
-if __name__ == "__main__":
-    main()
+webrtc_streamer(key="example", video_transformer_factory=VideoTransformer)
