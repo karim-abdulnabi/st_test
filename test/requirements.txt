@@ -1,3 +1,5 @@
-numpy
-streamlit-webrtc
-opencv-python
+streamlit==0.90.0
+streamlit-webrtc==0.18.0
+opencv-python==4.5.3
+Pillow==8.3.1
+
