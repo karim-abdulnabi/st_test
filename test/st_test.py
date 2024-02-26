@@ -1,7 +1,10 @@
 import cv2
+import os
 from streamlit_webrtc import VideoTransformerBase, webrtc_streamer
 
-faceCascade = cv2.CascadeClassifier(cv2.haarcascades+'haarcascade_frontalface_default.xml')
+# Find the path to the haarcascades directory
+cv2_base_dir = os.path.dirname(cv2.__file__)
+haar_cascade_path = os.path.join(cv2_base_dir, 'data', 'haarcascades', 'haarcascade_frontalface_default.xml')
 
 
 class VideoTransformer(VideoTransformerBase):
@@ -11,7 +14,7 @@ class VideoTransformer(VideoTransformerBase):
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray, 1.3, 5)
+        faceCascade = cv2.CascadeClassifier(haar_cascade_path)
         i =self.i+1
         for (x, y, w, h) in faces:
             cv2.rectangle(img, (x, y), (x + w, y + h), (95, 207, 30), 3)
