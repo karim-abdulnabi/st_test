@@ -1,6 +1,6 @@
 streamlit
+treamlit-webrtc
 opencv-python
-Pillow
 aiortc
 
 
