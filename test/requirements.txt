@@ -1,5 +1,6 @@
 numby
+streamlit
 streamlit-webrtc
-opencv-python
+
 
 
