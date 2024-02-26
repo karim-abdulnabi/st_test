@@ -1,4 +1,4 @@
-aiortc
-uvloop
-sphinx_autodoc_typehints
-sphinxcontrib-trio
+streamlit
+opencv-python
+Pillow
+
