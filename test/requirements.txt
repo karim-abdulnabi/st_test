@@ -1,6 +1,3 @@
-streamlit
-treamlit-webrtc
-opencv-python
-aiortc
-
+sphinx_autodoc_typehints
+sphinxcontrib-trio
 
