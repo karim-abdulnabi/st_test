@@ -1,47 +1,121 @@
+import argparse
 import asyncio
-import streamlit as st
-import cv2
-from PIL import Image
-from aiortc.contrib.media import MediaPlayer
+import logging
+import time
 
-async def consume_audio(video_stream, audio_stream):
+from aiortc import RTCIceCandidate, RTCPeerConnection, RTCSessionDescription
+from aiortc.contrib.signaling import BYE, add_signaling_arguments, create_signaling
+
+# optional, for better performance
+try:
+    import uvloop
+except ImportError:
+    uvloop = None
+
+
+async def consume_signaling(pc, signaling):
     while True:
-        frame = await video_stream.recv()
-        audio_frame = await audio_stream.recv()
+        obj = await signaling.receive()
 
-        # Perform any additional processing on the frame if needed
-        processed_frame = frame
+        if isinstance(obj, RTCSessionDescription):
+            await pc.setRemoteDescription(obj)
 
-        # Display the frame using st.video
-        st.video(processed_frame, channels="BGR", format="jpeg")
+            if obj.type == "offer":
+                # send answer
+                await pc.setLocalDescription(await pc.createAnswer())
+                await signaling.send(pc.localDescription)
+        elif isinstance(obj, RTCIceCandidate):
+            await pc.addIceCandidate(obj)
+        elif obj is BYE:
+            print("Exiting")
+            break
 
-def main():
-    st.title("Camera App with Streamlit and aiortc")
 
-    # Checkbox to start/stop the camera
-    start_camera = st.checkbox("Start Camera")
+async def run_answer(pc, signaling, filename):
+    await signaling.connect()
 
-    if start_camera:
-        player = MediaPlayer(video_device=0, audio_device=None)
-        video_stream = player.video
-        audio_stream = player.audio
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        start = time.time()
+        octets = 0
 
-        # Create an asyncio task to consume the audio and video streams
-        asyncio.create_task(consume_audio(video_stream, audio_stream))
+        @channel.on("message")
+        async def on_message(message):
+            nonlocal octets
 
-        # Button to capture a photo
-        if st.button("Capture Photo"):
-            # Get the latest frame from the video stream
-            frame, _ = video_stream.recv()
+            if message:
+                octets += len(message)
+                fp.write(message)
+            else:
+                elapsed = time.time() - start
+                print(
+                    "received %d bytes in %.1f s (%.3f Mbps)"
+                    % (octets, elapsed, octets * 8 / elapsed / 1000000)
+                )
 
-            # Save the captured frame as an image
-            filename = "captured_photo.jpg"
-            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            image.save(filename)
+                # say goodbye
+                await signaling.send(BYE)
 
-            # Display the captured photo
-            st.success("Photo captured successfully!")
-            st.image(filename, channels="RGB", use_column_width=True)
+    await consume_signaling(pc, signaling)
+
+
+async def run_offer(pc, signaling, fp):
+    await signaling.connect()
+
+    done_reading = False
+    channel = pc.createDataChannel("filexfer")
+
+    def send_data():
+        nonlocal done_reading
+
+        while (
+            channel.bufferedAmount <= channel.bufferedAmountLowThreshold
+        ) and not done_reading:
+            data = fp.read(16384)
+            channel.send(data)
+            if not data:
+                done_reading = True
+
+    channel.on("bufferedamountlow", send_data)
+    channel.on("open", send_data)
+
+    # send offer
+    await pc.setLocalDescription(await pc.createOffer())
+    await signaling.send(pc.localDescription)
+
+    await consume_signaling(pc, signaling)
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Data channel file transfer")
+    parser.add_argument("role", choices=["send", "receive"])
+    parser.add_argument("filename")
+    parser.add_argument("--verbose", "-v", action="count")
+    add_signaling_arguments(parser)
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if uvloop is not None:
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+    signaling = create_signaling(args)
+    pc = RTCPeerConnection()
+    if args.role == "send":
+        fp = open(args.filename, "rb")
+        coro = run_offer(pc, signaling, fp)
+    else:
+        fp = open(args.filename, "wb")
+        coro = run_answer(pc, signaling, fp)
+
+    # run event loop
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(coro)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        fp.close()
+        loop.run_until_complete(pc.close())
+        loop.run_until_complete(signaling.close())
