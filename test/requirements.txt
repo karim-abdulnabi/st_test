@@ -1,5 +1,4 @@
 numpy
 streamlit
 streamlit-webrtc
-opencv-python
-Pillow
+
