@@ -1,52 +1,43 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import cv2
-from PIL import Image, ImageDraw
+from PIL import Image
+
+class VideoTransformer(VideoTransformerBase):
+    def transform(self, frame):
+        # Modify this method to perform any additional processing on the frame if needed
+        return frame
 
 def main():
-    st.title("Camera App with OpenCV and Streamlit")
+    st.title("Camera App with Streamlit and OpenCV")
 
     # Checkbox to start/stop the camera
     start_camera = st.checkbox("Start Camera")
 
-    # Check if the camera is opened successfully
+    # Display the webcam feed using webrtc_streamer
+    webrtc_ctx = webrtc_streamer(key="example", video_transformer_factory=VideoTransformer)
+
     if start_camera:
-        camera = cv2.VideoCapture(0)  # 0 corresponds to the default camera
+        if webrtc_ctx.video_transformer:
+            # Get the latest frame from the webcam
+            frame = webrtc_ctx.video_transformer.frame
 
-        if not camera.isOpened():
-            st.error("Error: Could not open the camera.")
-            st.stop()
+            # Display the frame
+            st.image(frame, channels="BGR", use_column_width=True)
 
-        st.sidebar.header("Camera Settings")
-        brightness = st.sidebar.slider("Brightness", 0, 100, 50)
-        camera.set(10, brightness)
-
-        # Check if the frame is read successfully
-        _, frame = camera.read()
-        if frame is None:
-            st.warning("Warning: Could not read a frame from the camera.")
-            st.stop()
-
-        # Display the frame
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        st.image(frame, channels="RGB", use_column_width=True)
-
-    # Button to capture a photo
-    if st.button("Capture Photo"):
-        if start_camera:
-            _, frame = camera.read()
-            if frame is not None:
+        # Button to capture a photo
+        if st.button("Capture Photo"):
+            if webrtc_ctx.video_transformer:
                 # Save the captured frame as an image
                 filename = "captured_photo.jpg"
                 image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 image.save(filename)
-    
+
                 # Display the captured photo
                 st.success("Photo captured successfully!")
                 st.image(filename, channels="RGB", use_column_width=True)
             else:
-                st.warning("Warning: Could not read a frame from the camera.")
-        else:
-            st.warning("Start the camera before capturing a photo.")
+                st.warning("Start the camera before capturing a photo.")
 
 if __name__ == "__main__":
     main()
