@@ -1,315 +1,166 @@
+"""Object detection demo with MobileNet SSD.
+This model and code are based on
+https://github.com/robmarkcole/object-detection-app
+"""
+
 import logging
-import logging.handlers
 import queue
-import threading
-import time
-import urllib.request
-import os
-from collections import deque
 from pathlib import Path
-from typing import List
+from typing import List, NamedTuple
 
 import av
+import cv2
 import numpy as np
-import pydub
 import streamlit as st
-from twilio.rest import Client
-
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
+from sample_utils.download import download_file
+from sample_utils.turn import get_ice_servers
+
 HERE = Path(__file__).parent
+ROOT = HERE
 
 logger = logging.getLogger(__name__)
 
 
-# This code is based on https://github.com/streamlit/demo-self-driving/blob/230245391f2dda0cb464008195a470751c01770b/streamlit_app.py#L48  # noqa: E501
-def download_file(url, download_to: Path, expected_size=None):
-    # Don't download the file twice.
-    # (If possible, verify the download using the file length.)
-    if download_to.exists():
-        if expected_size:
-            if download_to.stat().st_size == expected_size:
-                return
-        else:
-            st.info(f"{url} is already downloaded.")
-            if not st.button("Download again?"):
-                return
+MODEL_URL = "https://github.com/robmarkcole/object-detection-app/raw/master/model/MobileNetSSD_deploy.caffemodel"  # noqa: E501
+MODEL_LOCAL_PATH = ROOT / "./models/MobileNetSSD_deploy.caffemodel"
+PROTOTXT_URL = "https://github.com/robmarkcole/object-detection-app/raw/master/model/MobileNetSSD_deploy.prototxt.txt"  # noqa: E501
+PROTOTXT_LOCAL_PATH = ROOT / "./models/MobileNetSSD_deploy.prototxt.txt"
 
-    download_to.parent.mkdir(parents=True, exist_ok=True)
-
-    # These are handles to two visual elements to animate.
-    weights_warning, progress_bar = None, None
-    try:
-        weights_warning = st.warning("Downloading %s..." % url)
-        progress_bar = st.progress(0)
-        with open(download_to, "wb") as output_file:
-            with urllib.request.urlopen(url) as response:
-                length = int(response.info()["Content-Length"])
-                counter = 0.0
-                MEGABYTES = 2.0 ** 20.0
-                while True:
-                    data = response.read(8192)
-                    if not data:
-                        break
-                    counter += len(data)
-                    output_file.write(data)
-
-                    # We perform animation by overwriting the elements.
-                    weights_warning.warning(
-                        "Downloading %s... (%6.2f/%6.2f MB)"
-                        % (url, counter / MEGABYTES, length / MEGABYTES)
-                    )
-                    progress_bar.progress(min(counter / length, 1.0))
-    # Finally, we remove these visual elements by calling .empty().
-    finally:
-        if weights_warning is not None:
-            weights_warning.empty()
-        if progress_bar is not None:
-            progress_bar.empty()
+CLASSES = [
+    "background",
+    "aeroplane",
+    "bicycle",
+    "bird",
+    "boat",
+    "bottle",
+    "bus",
+    "car",
+    "cat",
+    "chair",
+    "cow",
+    "diningtable",
+    "dog",
+    "horse",
+    "motorbike",
+    "person",
+    "pottedplant",
+    "sheep",
+    "sofa",
+    "train",
+    "tvmonitor",
+]
 
 
-# This code is based on https://github.com/whitphx/streamlit-webrtc/blob/c1fe3c783c9e8042ce0c95d789e833233fd82e74/sample_utils/turn.py
-@st.cache_data  # type: ignore
-def get_ice_servers():
-    """Use Twilio's TURN server because Streamlit Community Cloud has changed
-    its infrastructure and WebRTC connection cannot be established without TURN server now.  # noqa: E501
-    We considered Open Relay Project (https://www.metered.ca/tools/openrelay/) too,
-    but it is not stable and hardly works as some people reported like https://github.com/aiortc/aiortc/issues/832#issuecomment-1482420656  # noqa: E501
-    See https://github.com/whitphx/streamlit-webrtc/issues/1213
-    """
-
-    # Ref: https://www.twilio.com/docs/stun-turn/api
-    try:
-        account_sid = os.environ["TWILIO_ACCOUNT_SID"]
-        auth_token = os.environ["TWILIO_AUTH_TOKEN"]
-    except KeyError:
-        logger.warning(
-            "Twilio credentials are not set. Fallback to a free STUN server from Google."  # noqa: E501
-        )
-        return [{"urls": ["stun:stun.l.google.com:19302"]}]
-
-    client = Client(account_sid, auth_token)
-
-    token = client.tokens.create()
-
-    return token.ice_servers
+class Detection(NamedTuple):
+    class_id: int
+    label: str
+    score: float
+    box: np.ndarray
 
 
+@st.cache_resource  # type: ignore
+def generate_label_colors():
+    return np.random.uniform(0, 255, size=(len(CLASSES), 3))
 
-def main():
-    st.header("Real Time Speech-to-Text")
-    st.markdown(
-        """
-This demo app is using [DeepSpeech](https://github.com/mozilla/DeepSpeech),
-an open speech-to-text engine.
 
-A pre-trained model released with
-[v0.9.3](https://github.com/mozilla/DeepSpeech/releases/tag/v0.9.3),
-trained on American English is being served.
-"""
+COLORS = generate_label_colors()
+
+download_file(MODEL_URL, MODEL_LOCAL_PATH, expected_size=23147564)
+download_file(PROTOTXT_URL, PROTOTXT_LOCAL_PATH, expected_size=29353)
+
+
+# Session-specific caching
+cache_key = "object_detection_dnn"
+if cache_key in st.session_state:
+    net = st.session_state[cache_key]
+else:
+    net = cv2.dnn.readNetFromCaffe(str(PROTOTXT_LOCAL_PATH), str(MODEL_LOCAL_PATH))
+    st.session_state[cache_key] = net
+
+score_threshold = st.slider("Score threshold", 0.0, 1.0, 0.5, 0.05)
+
+# NOTE: The callback will be called in another thread,
+#       so use a queue here for thread-safety to pass the data
+#       from inside to outside the callback.
+# TODO: A general-purpose shared state object may be more useful.
+result_queue: "queue.Queue[List[Detection]]" = queue.Queue()
+
+
+def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+    image = frame.to_ndarray(format="bgr24")
+
+    # Run inference
+    blob = cv2.dnn.blobFromImage(
+        cv2.resize(image, (300, 300)), 0.007843, (300, 300), 127.5
     )
+    net.setInput(blob)
+    output = net.forward()
 
-    # https://github.com/mozilla/DeepSpeech/releases/tag/v0.9.3
-    MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.pbmm"  # noqa
-    LANG_MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.scorer"  # noqa
-    MODEL_LOCAL_PATH = HERE / "models/deepspeech-0.9.3-models.pbmm"
-    LANG_MODEL_LOCAL_PATH = HERE / "models/deepspeech-0.9.3-models.scorer"
+    h, w = image.shape[:2]
 
-    download_file(MODEL_URL, MODEL_LOCAL_PATH, expected_size=188915987)
-    download_file(LANG_MODEL_URL, LANG_MODEL_LOCAL_PATH, expected_size=953363776)
-
-    lm_alpha = 0.931289039105002
-    lm_beta = 1.1834137581510284
-    beam = 100
-
-    sound_only_page = "Sound only (sendonly)"
-    with_video_page = "With video (sendrecv)"
-    app_mode = st.selectbox("Choose the app mode", [sound_only_page, with_video_page])
-
-    if app_mode == sound_only_page:
-        app_sst(
-            str(MODEL_LOCAL_PATH), str(LANG_MODEL_LOCAL_PATH), lm_alpha, lm_beta, beam
+    # Convert the output array into a structured form.
+    output = output.squeeze()  # (1, 1, N, 7) -> (N, 7)
+    output = output[output[:, 2] >= score_threshold]
+    detections = [
+        Detection(
+            class_id=int(detection[1]),
+            label=CLASSES[int(detection[1])],
+            score=float(detection[2]),
+            box=(detection[3:7] * np.array([w, h, w, h])),
         )
-    elif app_mode == with_video_page:
-        app_sst_with_video(
-            str(MODEL_LOCAL_PATH), str(LANG_MODEL_LOCAL_PATH), lm_alpha, lm_beta, beam
+        for detection in output
+    ]
+
+    # Render bounding boxes and captions
+    for detection in detections:
+        caption = f"{detection.label}: {round(detection.score * 100, 2)}%"
+        color = COLORS[detection.class_id]
+        xmin, ymin, xmax, ymax = detection.box.astype("int")
+
+        cv2.rectangle(image, (xmin, ymin), (xmax, ymax), color, 2)
+        cv2.putText(
+            image,
+            caption,
+            (xmin, ymin - 15 if ymin - 15 > 15 else ymin + 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            2,
         )
 
+    result_queue.put(detections)
 
-def app_sst(model_path: str, lm_path: str, lm_alpha: float, lm_beta: float, beam: int):
-    webrtc_ctx = webrtc_streamer(
-        key="speech-to-text",
-        mode=WebRtcMode.SENDONLY,
-        audio_receiver_size=1024,
-        rtc_configuration={"iceServers": get_ice_servers()},
-        media_stream_constraints={"video": False, "audio": True},
-    )
-
-    status_indicator = st.empty()
-
-    if not webrtc_ctx.state.playing:
-        return
-
-    status_indicator.write("Loading...")
-    text_output = st.empty()
-    stream = None
-
-    while True:
-        if webrtc_ctx.audio_receiver:
-            if stream is None:
-                from deepspeech import Model
-
-                model = Model(model_path)
-                model.enableExternalScorer(lm_path)
-                model.setScorerAlphaBeta(lm_alpha, lm_beta)
-                model.setBeamWidth(beam)
-
-                stream = model.createStream()
-
-                status_indicator.write("Model loaded.")
-
-            sound_chunk = pydub.AudioSegment.empty()
-            try:
-                audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
-            except queue.Empty:
-                time.sleep(0.1)
-                status_indicator.write("No frame arrived.")
-                continue
-
-            status_indicator.write("Running. Say something!")
-
-            for audio_frame in audio_frames:
-                sound = pydub.AudioSegment(
-                    data=audio_frame.to_ndarray().tobytes(),
-                    sample_width=audio_frame.format.bytes,
-                    frame_rate=audio_frame.sample_rate,
-                    channels=len(audio_frame.layout.channels),
-                )
-                sound_chunk += sound
-
-            if len(sound_chunk) > 0:
-                sound_chunk = sound_chunk.set_channels(1).set_frame_rate(
-                    model.sampleRate()
-                )
-                buffer = np.array(sound_chunk.get_array_of_samples())
-                stream.feedAudioContent(buffer)
-                text = stream.intermediateDecode()
-                text_output.markdown(f"**Text:** {text}")
-        else:
-            status_indicator.write("AudioReciver is not set. Abort.")
-            break
+    return av.VideoFrame.from_ndarray(image, format="bgr24")
 
 
-def app_sst_with_video(
-    model_path: str, lm_path: str, lm_alpha: float, lm_beta: float, beam: int
-):
-    frames_deque_lock = threading.Lock()
-    frames_deque: deque = deque([])
+webrtc_ctx = webrtc_streamer(
+    key="object-detection",
+    mode=WebRtcMode.SENDRECV,
+    rtc_configuration={
+        "iceServers": get_ice_servers(),
+        "iceTransportPolicy": "relay",
+    },
+    video_frame_callback=video_frame_callback,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
 
-    async def queued_audio_frames_callback(
-        frames: List[av.AudioFrame],
-    ) -> av.AudioFrame:
-        with frames_deque_lock:
-            frames_deque.extend(frames)
+if st.checkbox("Show the detected labels", value=True):
+    if webrtc_ctx.state.playing:
+        labels_placeholder = st.empty()
+        # NOTE: The video transformation with object detection and
+        # this loop displaying the result labels are running
+        # in different threads asynchronously.
+        # Then the rendered video frames and the labels displayed here
+        # are not strictly synchronized.
+        while True:
+            result = result_queue.get()
+            labels_placeholder.table(result)
 
-        # Return empty frames to be silent.
-        new_frames = []
-        for frame in frames:
-            input_array = frame.to_ndarray()
-            new_frame = av.AudioFrame.from_ndarray(
-                np.zeros(input_array.shape, dtype=input_array.dtype),
-                layout=frame.layout.name,
-            )
-            new_frame.sample_rate = frame.sample_rate
-            new_frames.append(new_frame)
-
-        return new_frames
-
-    webrtc_ctx = webrtc_streamer(
-        key="speech-to-text-w-video",
-        mode=WebRtcMode.SENDRECV,
-        queued_audio_frames_callback=queued_audio_frames_callback,
-        rtc_configuration={"iceServers": get_ice_servers()},
-        media_stream_constraints={"video": True, "audio": True},
-    )
-
-    status_indicator = st.empty()
-
-    if not webrtc_ctx.state.playing:
-        return
-
-    status_indicator.write("Loading...")
-    text_output = st.empty()
-    stream = None
-
-    while True:
-        if webrtc_ctx.state.playing:
-            if stream is None:
-                from deepspeech import Model
-
-                model = Model(model_path)
-                model.enableExternalScorer(lm_path)
-                model.setScorerAlphaBeta(lm_alpha, lm_beta)
-                model.setBeamWidth(beam)
-
-                stream = model.createStream()
-
-                status_indicator.write("Model loaded.")
-
-            sound_chunk = pydub.AudioSegment.empty()
-
-            audio_frames = []
-            with frames_deque_lock:
-                while len(frames_deque) > 0:
-                    frame = frames_deque.popleft()
-                    audio_frames.append(frame)
-
-            if len(audio_frames) == 0:
-                time.sleep(0.1)
-                status_indicator.write("No frame arrived.")
-                continue
-
-            status_indicator.write("Running. Say something!")
-
-            for audio_frame in audio_frames:
-                sound = pydub.AudioSegment(
-                    data=audio_frame.to_ndarray().tobytes(),
-                    sample_width=audio_frame.format.bytes,
-                    frame_rate=audio_frame.sample_rate,
-                    channels=len(audio_frame.layout.channels),
-                )
-                sound_chunk += sound
-
-            if len(sound_chunk) > 0:
-                sound_chunk = sound_chunk.set_channels(1).set_frame_rate(
-                    model.sampleRate()
-                )
-                buffer = np.array(sound_chunk.get_array_of_samples())
-                stream.feedAudioContent(buffer)
-                text = stream.intermediateDecode()
-                text_output.markdown(f"**Text:** {text}")
-        else:
-            status_indicator.write("Stopped.")
-            break
-
-
-if __name__ == "__main__":
-    import os
-
-    DEBUG = os.environ.get("DEBUG", "false").lower() not in ["false", "no", "0"]
-
-    logging.basicConfig(
-        format="[%(asctime)s] %(levelname)7s from %(name)s in %(pathname)s:%(lineno)d: "
-        "%(message)s",
-        force=True,
-    )
-
-    logger.setLevel(level=logging.DEBUG if DEBUG else logging.INFO)
-
-    st_webrtc_logger = logging.getLogger("streamlit_webrtc")
-    st_webrtc_logger.setLevel(logging.DEBUG)
-
-    fsevents_logger = logging.getLogger("fsevents")
-    fsevents_logger.setLevel(logging.WARNING)
-
-    main()
+st.markdown(
+    "This demo uses a model and code from "
+    "https://github.com/robmarkcole/object-detection-app. "
+    "Many thanks to the project."
+)
