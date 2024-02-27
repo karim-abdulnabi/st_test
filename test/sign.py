@@ -1,274 +1,315 @@
-#Install libraries 🏗️
-import pickle
-import cv2
-import mediapipe as mp
-import numpy as np
-import pyttsx3
-import streamlit as st
-import io
-from PIL import Image
-from translate import Translator
+import logging
+import logging.handlers
+import queue
+import threading
 import time
-import speech_recognition as sr
-from PIL import Image
-import requests
-import youtube_dl
-import re
-
-
-
-
-
-sign_start_time = 0
-sign_timeout = 1.25
-
-model_dict = pickle.load(open('./model.p', 'rb'))
-model = model_dict['model']
-
-#cap = cv2.VideoCapture(0)
-
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-
-hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
-
-labels_dict = {0: ' ', 1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'E', 6: 'F', 7: 'G', 8: 'H', 9: 'I', 10: 'K', 11: 'L',
-               12: 'M', 13: 'N', 14: 'O', 15: 'P', 16: 'Q', 17: 'R', 18: 'S', 19: 'T', 20: 'U', 21: 'V', 22: 'W',
-               23: 'X', 24: 'Y', 25: '', 26: 'J', 27: 'Z'}
-
-previous_character = ""
-recognized_word = "" # Variable to store the recognized word
-
-
-
-# Create a Streamlit app
-
-# Add a title to your Streamlit app
-st.title("🤟 ***:blue[Sign Language]*** 🤟")
-
-st.success("**Text-to-Speech Recognition** 🔊")
-
-
-# Display the image containing sign language signs
-st.image("https://miro.medium.com/v2/resize:fit:665/1*MLudTwKUYiCYQE0cV7p6aQ.png", width=500 )
-
-# The rest of your Streamlit code...
-  
-
-# Create a text element to display the recognized character
-recognized_text = st.empty()
-
-# Initialize Streamlit session state
-if 'recognized_word' not in st.session_state:
-    st.session_state.recognized_word = "" 
-
-# Initialize the TTS engine
-def initialize_tts_engine():
-    if not hasattr(st.session_state, "tts_engine"):
-        st.session_state.tts_engine = pyttsx3.init()
-
-# Initialize the TTS engine at the beginning of the app
-initialize_tts_engine()
-
-# Display the video feed and recognized character
-video_frame = st.empty()
-
-# Create a sidebar for buttons on the left side
-st.sidebar.header("Actions 🛠️")
-
-# Initialize the text-to-speech engine
-engine = pyttsx3.init()
-
-# Create buttons
-close_button = st.sidebar.button("Close Application ❌")
-# Check if the close button is clicked
-if close_button:
-    st.sidebar.success("**:blue[thank you for using ASL]🙏**")
-    st.sidebar.image("https://menlocoa.org/wp-content/uploads/2023/04/Screen-Shot-2023-04-05-at-10.09.30-AM-900x606.png", width=200 )
-    st.stop()  # Stop the Streamlit application
-
-
-# Function to reset the app state
-def reset_app_state():
-    st.session_state.recognized_word = ""
-    st.session_state.translated_word = ""
-    # Add a button to refresh the app
-
-refresh_button = st.sidebar.button("Refresh App 🔃")
-
-# Check if the refresh button is clicked
-if refresh_button:
-    st.rerun()
-
-# Create a button to clear all
-clear_button = st.sidebar.button("Clear All 🧹")
-
-# Check if the clear button is clicked
-if clear_button:
-    st.session_state.recognized_word = ""  # Reset the recognized word
-
-# Create a button to speak the recognized text
-speak_button = st.sidebar.button("Speak Recognized Text 🔊")
-
-# Check if the speak button is clicked
-if speak_button:
-    engine.say(st.session_state.recognized_word)
-    engine.runAndWait()
-
-translte_button = st.sidebar.button("Translate 🔄 ")
-# Check if the show word button is clicked
-if translte_button:
-    st.text(f"Recognized Word :{st.session_state.recognized_word}")
-    translte = Translator(to_lang='ar')
-    st.success(f"**translate to arabic :** {translte.translate(st.session_state.recognized_word)}")
-   
-
-
-# Create a button to remove the last character
-remove_last_button = st.sidebar.button("Remove Last Character ⬅️ ")
-
-# Check if the remove last button is clicked
-if remove_last_button:
-    if st.session_state.recognized_word:
-        st.session_state.recognized_word = st.session_state.recognized_word[:-1]  # Remove the last character
-
-# Create a button to save the recognized text
-save_button = st.sidebar.button("Save Text 📥")
-
-#####
-
-# Add a button for speech recognition
-speech_recognition_button = st.sidebar.button("Start Speech Recognition 🗣️")
-
-# Initialize the recognizer
-recognizer = sr.Recognizer()
-
-# Function to perform speech recognition
-def perform_speech_recognition():
-    with sr.Microphone() as source:
-        st.sidebar.write("Speak something...")
-        recognizer.adjust_for_ambient_noise(source)
-        audio = recognizer.listen(source)
-    
-    try:
-        recognized_speech = recognizer.recognize_google(audio)  # You can choose a different recognizer if needed
-        st.sidebar.write(f"Recognized Speech: {recognized_speech}")
-        st.session_state.recognized_word += recognized_speech  # Append the recognized speech to the text
-    
-    except sr.UnknownValueError:
-        st.sidebar.write("Could not understand the audio")
-    except sr.RequestError as e:
-        st.sidebar.write(f"Error: {e}")
-
-# Check if the speech recognition button is clicked
-if speech_recognition_button:
-    perform_speech_recognition()
-
-
-#####
-# Initialize a variable to store the saved text
-recognaized_text = ""
-
-# Function to save the recognized text to a file
-def save_recognized_text():
-    global recognaized_text
-    recognaized_text = st.session_state.recognized_word
-    
-    # Specify the file path where you want to save the text
-    file_path = "recognaized_text.txt"
-
-    # Save the text to the file
-    with open(file_path, "w") as file:
-        file.write(recognaized_text)
-
-# Check if the "Save Text" button is clicked
-if save_button:
-    save_recognized_text()
-
-
-# Display a success message if text is saved
-if recognaized_text:
-    st.success(f"Text saved: {recognaized_text}")
-    st.write(f"The text has been saved to a file: recognaized_text.txt")
-
-
-
-cap = cv2.VideoCapture(0 , cv2.CAP_DSHOW)  # Start the camera capture
-
-while True:
-    ret, frame = cap.read()
-
-    if not ret:
-        # Video capture failed, wait and try again
-        continue
-
-    H, W, _ = frame.shape
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-    results = hands.process(frame_rgb)
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            mp_drawing.draw_landmarks(
-                frame,
-                hand_landmarks,
-                mp_hands.HAND_CONNECTIONS,
-                mp_drawing_styles.get_default_hand_landmarks_style(),
-                mp_drawing_styles.get_default_hand_connections_style())
-
-        data_aux = []
-        x_ = []
-        y_ = []
-
-        for hand_landmarks in results.multi_hand_landmarks:
-            for i in range(len(hand_landmarks.landmark)):
-                x = hand_landmarks.landmark[i].x
-                y = hand_landmarks.landmark[i].y
-
-                x_.append(x)
-                y_.append(y)
-
-            for i in range(len(hand_landmarks.landmark)):
-                x = hand_landmarks.landmark[i].x
-                y = hand_landmarks.landmark[i].y
-                data_aux.append(x - min(x_))
-                data_aux.append(y - min(y_))
-
-        x1 = int(min(x_) * W) - 10
-        y1 = int(min(y_) * H) - 10
-
-        x2 = int(max(x_) * W) - 10
-        y2 = int(max(y_) * H) - 10
-
-        prediction = model.predict([np.asarray(data_aux)])
-
-        predicted_character = labels_dict[int(prediction[0])]
-        
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 0), 4)
-        cv2.putText(frame, predicted_character, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 3, cv2.LINE_AA)
-
-        if predicted_character == previous_character:
-            if sign_start_time is None:
-                sign_start_time = time.time()
-            else:
-                current_time = time.time()
-                if current_time - sign_start_time >= sign_timeout:
-                    st.session_state.recognized_word += predicted_character
-                    sign_start_time = None
+import urllib.request
+import os
+from collections import deque
+from pathlib import Path
+from typing import List
+
+import av
+import numpy as np
+import pydub
+import streamlit as st
+from twilio.rest import Client
+
+from streamlit_webrtc import WebRtcMode, webrtc_streamer
+
+HERE = Path(__file__).parent
+
+logger = logging.getLogger(__name__)
+
+
+# This code is based on https://github.com/streamlit/demo-self-driving/blob/230245391f2dda0cb464008195a470751c01770b/streamlit_app.py#L48  # noqa: E501
+def download_file(url, download_to: Path, expected_size=None):
+    # Don't download the file twice.
+    # (If possible, verify the download using the file length.)
+    if download_to.exists():
+        if expected_size:
+            if download_to.stat().st_size == expected_size:
+                return
         else:
-            sign_start_time = None
+            st.info(f"{url} is already downloaded.")
+            if not st.button("Download again?"):
+                return
 
-        previous_character = predicted_character
+    download_to.parent.mkdir(parents=True, exist_ok=True)
 
-    # Convert the frame to bytes
-    frame_bytes = cv2.imencode('.jpg', frame)[1].tobytes()
+    # These are handles to two visual elements to animate.
+    weights_warning, progress_bar = None, None
+    try:
+        weights_warning = st.warning("Downloading %s..." % url)
+        progress_bar = st.progress(0)
+        with open(download_to, "wb") as output_file:
+            with urllib.request.urlopen(url) as response:
+                length = int(response.info()["Content-Length"])
+                counter = 0.0
+                MEGABYTES = 2.0 ** 20.0
+                while True:
+                    data = response.read(8192)
+                    if not data:
+                        break
+                    counter += len(data)
+                    output_file.write(data)
 
-    # Update the video feed and recognized character using Streamlit
-    video_frame.image(frame_bytes, caption='Video Feed', use_column_width=True, channels="BGR")
-    recognized_text.text(f"Recognized Character: {st.session_state.recognized_word}")
-    
-    
+                    # We perform animation by overwriting the elements.
+                    weights_warning.warning(
+                        "Downloading %s... (%6.2f/%6.2f MB)"
+                        % (url, counter / MEGABYTES, length / MEGABYTES)
+                    )
+                    progress_bar.progress(min(counter / length, 1.0))
+    # Finally, we remove these visual elements by calling .empty().
+    finally:
+        if weights_warning is not None:
+            weights_warning.empty()
+        if progress_bar is not None:
+            progress_bar.empty()
 
-# Close the video capture and the app
-cap.release()
-cv2.destroyAllWindows()
+
+# This code is based on https://github.com/whitphx/streamlit-webrtc/blob/c1fe3c783c9e8042ce0c95d789e833233fd82e74/sample_utils/turn.py
+@st.cache_data  # type: ignore
+def get_ice_servers():
+    """Use Twilio's TURN server because Streamlit Community Cloud has changed
+    its infrastructure and WebRTC connection cannot be established without TURN server now.  # noqa: E501
+    We considered Open Relay Project (https://www.metered.ca/tools/openrelay/) too,
+    but it is not stable and hardly works as some people reported like https://github.com/aiortc/aiortc/issues/832#issuecomment-1482420656  # noqa: E501
+    See https://github.com/whitphx/streamlit-webrtc/issues/1213
+    """
+
+    # Ref: https://www.twilio.com/docs/stun-turn/api
+    try:
+        account_sid = os.environ["TWILIO_ACCOUNT_SID"]
+        auth_token = os.environ["TWILIO_AUTH_TOKEN"]
+    except KeyError:
+        logger.warning(
+            "Twilio credentials are not set. Fallback to a free STUN server from Google."  # noqa: E501
+        )
+        return [{"urls": ["stun:stun.l.google.com:19302"]}]
+
+    client = Client(account_sid, auth_token)
+
+    token = client.tokens.create()
+
+    return token.ice_servers
+
+
+
+def main():
+    st.header("Real Time Speech-to-Text")
+    st.markdown(
+        """
+This demo app is using [DeepSpeech](https://github.com/mozilla/DeepSpeech),
+an open speech-to-text engine.
+
+A pre-trained model released with
+[v0.9.3](https://github.com/mozilla/DeepSpeech/releases/tag/v0.9.3),
+trained on American English is being served.
+"""
+    )
+
+    # https://github.com/mozilla/DeepSpeech/releases/tag/v0.9.3
+    MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.pbmm"  # noqa
+    LANG_MODEL_URL = "https://github.com/mozilla/DeepSpeech/releases/download/v0.9.3/deepspeech-0.9.3-models.scorer"  # noqa
+    MODEL_LOCAL_PATH = HERE / "models/deepspeech-0.9.3-models.pbmm"
+    LANG_MODEL_LOCAL_PATH = HERE / "models/deepspeech-0.9.3-models.scorer"
+
+    download_file(MODEL_URL, MODEL_LOCAL_PATH, expected_size=188915987)
+    download_file(LANG_MODEL_URL, LANG_MODEL_LOCAL_PATH, expected_size=953363776)
+
+    lm_alpha = 0.931289039105002
+    lm_beta = 1.1834137581510284
+    beam = 100
+
+    sound_only_page = "Sound only (sendonly)"
+    with_video_page = "With video (sendrecv)"
+    app_mode = st.selectbox("Choose the app mode", [sound_only_page, with_video_page])
+
+    if app_mode == sound_only_page:
+        app_sst(
+            str(MODEL_LOCAL_PATH), str(LANG_MODEL_LOCAL_PATH), lm_alpha, lm_beta, beam
+        )
+    elif app_mode == with_video_page:
+        app_sst_with_video(
+            str(MODEL_LOCAL_PATH), str(LANG_MODEL_LOCAL_PATH), lm_alpha, lm_beta, beam
+        )
+
+
+def app_sst(model_path: str, lm_path: str, lm_alpha: float, lm_beta: float, beam: int):
+    webrtc_ctx = webrtc_streamer(
+        key="speech-to-text",
+        mode=WebRtcMode.SENDONLY,
+        audio_receiver_size=1024,
+        rtc_configuration={"iceServers": get_ice_servers()},
+        media_stream_constraints={"video": False, "audio": True},
+    )
+
+    status_indicator = st.empty()
+
+    if not webrtc_ctx.state.playing:
+        return
+
+    status_indicator.write("Loading...")
+    text_output = st.empty()
+    stream = None
+
+    while True:
+        if webrtc_ctx.audio_receiver:
+            if stream is None:
+                from deepspeech import Model
+
+                model = Model(model_path)
+                model.enableExternalScorer(lm_path)
+                model.setScorerAlphaBeta(lm_alpha, lm_beta)
+                model.setBeamWidth(beam)
+
+                stream = model.createStream()
+
+                status_indicator.write("Model loaded.")
+
+            sound_chunk = pydub.AudioSegment.empty()
+            try:
+                audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
+            except queue.Empty:
+                time.sleep(0.1)
+                status_indicator.write("No frame arrived.")
+                continue
+
+            status_indicator.write("Running. Say something!")
+
+            for audio_frame in audio_frames:
+                sound = pydub.AudioSegment(
+                    data=audio_frame.to_ndarray().tobytes(),
+                    sample_width=audio_frame.format.bytes,
+                    frame_rate=audio_frame.sample_rate,
+                    channels=len(audio_frame.layout.channels),
+                )
+                sound_chunk += sound
+
+            if len(sound_chunk) > 0:
+                sound_chunk = sound_chunk.set_channels(1).set_frame_rate(
+                    model.sampleRate()
+                )
+                buffer = np.array(sound_chunk.get_array_of_samples())
+                stream.feedAudioContent(buffer)
+                text = stream.intermediateDecode()
+                text_output.markdown(f"**Text:** {text}")
+        else:
+            status_indicator.write("AudioReciver is not set. Abort.")
+            break
+
+
+def app_sst_with_video(
+    model_path: str, lm_path: str, lm_alpha: float, lm_beta: float, beam: int
+):
+    frames_deque_lock = threading.Lock()
+    frames_deque: deque = deque([])
+
+    async def queued_audio_frames_callback(
+        frames: List[av.AudioFrame],
+    ) -> av.AudioFrame:
+        with frames_deque_lock:
+            frames_deque.extend(frames)
+
+        # Return empty frames to be silent.
+        new_frames = []
+        for frame in frames:
+            input_array = frame.to_ndarray()
+            new_frame = av.AudioFrame.from_ndarray(
+                np.zeros(input_array.shape, dtype=input_array.dtype),
+                layout=frame.layout.name,
+            )
+            new_frame.sample_rate = frame.sample_rate
+            new_frames.append(new_frame)
+
+        return new_frames
+
+    webrtc_ctx = webrtc_streamer(
+        key="speech-to-text-w-video",
+        mode=WebRtcMode.SENDRECV,
+        queued_audio_frames_callback=queued_audio_frames_callback,
+        rtc_configuration={"iceServers": get_ice_servers()},
+        media_stream_constraints={"video": True, "audio": True},
+    )
+
+    status_indicator = st.empty()
+
+    if not webrtc_ctx.state.playing:
+        return
+
+    status_indicator.write("Loading...")
+    text_output = st.empty()
+    stream = None
+
+    while True:
+        if webrtc_ctx.state.playing:
+            if stream is None:
+                from deepspeech import Model
+
+                model = Model(model_path)
+                model.enableExternalScorer(lm_path)
+                model.setScorerAlphaBeta(lm_alpha, lm_beta)
+                model.setBeamWidth(beam)
+
+                stream = model.createStream()
+
+                status_indicator.write("Model loaded.")
+
+            sound_chunk = pydub.AudioSegment.empty()
+
+            audio_frames = []
+            with frames_deque_lock:
+                while len(frames_deque) > 0:
+                    frame = frames_deque.popleft()
+                    audio_frames.append(frame)
+
+            if len(audio_frames) == 0:
+                time.sleep(0.1)
+                status_indicator.write("No frame arrived.")
+                continue
+
+            status_indicator.write("Running. Say something!")
+
+            for audio_frame in audio_frames:
+                sound = pydub.AudioSegment(
+                    data=audio_frame.to_ndarray().tobytes(),
+                    sample_width=audio_frame.format.bytes,
+                    frame_rate=audio_frame.sample_rate,
+                    channels=len(audio_frame.layout.channels),
+                )
+                sound_chunk += sound
+
+            if len(sound_chunk) > 0:
+                sound_chunk = sound_chunk.set_channels(1).set_frame_rate(
+                    model.sampleRate()
+                )
+                buffer = np.array(sound_chunk.get_array_of_samples())
+                stream.feedAudioContent(buffer)
+                text = stream.intermediateDecode()
+                text_output.markdown(f"**Text:** {text}")
+        else:
+            status_indicator.write("Stopped.")
+            break
+
+
+if __name__ == "__main__":
+    import os
+
+    DEBUG = os.environ.get("DEBUG", "false").lower() not in ["false", "no", "0"]
+
+    logging.basicConfig(
+        format="[%(asctime)s] %(levelname)7s from %(name)s in %(pathname)s:%(lineno)d: "
+        "%(message)s",
+        force=True,
+    )
+
+    logger.setLevel(level=logging.DEBUG if DEBUG else logging.INFO)
+
+    st_webrtc_logger = logging.getLogger("streamlit_webrtc")
+    st_webrtc_logger.setLevel(logging.DEBUG)
+
+    fsevents_logger = logging.getLogger("fsevents")
+    fsevents_logger.setLevel(logging.WARNING)
+
+    main()
