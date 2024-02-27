@@ -1,5 +1,2 @@
-opencv-python-headless==4.8.1.78
-pydub==0.25.1
-streamlit_webrtc==0.47.1
-twilio~=8.10.1
-matplotlib
+opencv-python>=3.4.2
+mediapipe>=0.8.6
