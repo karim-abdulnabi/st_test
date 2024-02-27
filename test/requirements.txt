@@ -1,3 +1,4 @@
 opencv-python>=3.4.2
 mediapipe>=0.8.6
 keras
+tensorflow 
