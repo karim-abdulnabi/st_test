@@ -10,7 +10,7 @@ from imutils.video import VideoStream
 from mqtt import get_mqtt_client
 from PIL import Image
 
-CONFIG_FILE_PATH = os.getenv("MQTT_CAMERA_CONFIG", "./config/config.yml")
+CONFIG_FILE_PATH = os.getenv("MQTT_CAMERA_CONFIG", "https://github.com/robmarkcole/mqtt-camera-streamer/tree/master/config")
 CONFIG = get_config(CONFIG_FILE_PATH)
 
 MQTT_BROKER = CONFIG["mqtt"]["broker"]
