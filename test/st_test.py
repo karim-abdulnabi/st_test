@@ -1,26 +1,48 @@
-import cv2
+"""
+Capture frames from a camera using OpenCV and publish on an MQTT topic.
+"""
 import os
-from streamlit_webrtc import VideoTransformerBase, webrtc_streamer
+import time
 
-# Find the path to the haarcascades directory
-cv2_base_dir = os.path.dirname(cv2.__file__)
-haar_cascade_path = os.path.join(cv2_base_dir, 'data', 'haarcascades', 'haarcascade_frontalface_default.xml')
+from helpers import get_config, get_now_string, pil_image_to_byte_array
+from imutils import opencv2matplotlib
+from imutils.video import VideoStream
+from mqtt import get_mqtt_client
+from PIL import Image
+
+CONFIG_FILE_PATH = os.getenv("MQTT_CAMERA_CONFIG", "./config/config.yml")
+CONFIG = get_config(CONFIG_FILE_PATH)
+
+MQTT_BROKER = CONFIG["mqtt"]["broker"]
+MQTT_PORT = CONFIG["mqtt"]["port"]
+MQTT_QOS = CONFIG["mqtt"]["QOS"]
+
+MQTT_TOPIC_CAMERA = CONFIG["camera"]["mqtt_topic"]
+VIDEO_SOURCE = CONFIG["camera"]["video_source"]
+FPS = CONFIG["camera"]["fps"]
 
 
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.i = 0
+def main():
+    client = get_mqtt_client()
+    client.connect(MQTT_BROKER, port=MQTT_PORT)
+    time.sleep(4)  # Wait for connection setup to complete
+    client.loop_start()
 
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faceCascade = cv2.CascadeClassifier(haar_cascade_path)
-        i =self.i+1
-        for (x, y, w, h) in faces:
-            cv2.rectangle(img, (x, y), (x + w, y + h), (95, 207, 30), 3)
-            cv2.rectangle(img, (x, y - 40), (x + w, y), (95, 207, 30), -1)
-            cv2.putText(img, 'F-' + str(i), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+    # Open camera
+    camera = VideoStream(src=VIDEO_SOURCE, framerate=FPS).start()
+    time.sleep(2)  # Webcam light should come on if using one
 
-        return img
+    while True:
+        frame = camera.read()
+        np_array_RGB = opencv2matplotlib(frame)  # Convert to RGB
 
-webrtc_streamer(key="example", video_transformer_factory=VideoTransformer)
+        image = Image.fromarray(np_array_RGB)  #  PIL image
+        byte_array = pil_image_to_byte_array(image)
+        client.publish(MQTT_TOPIC_CAMERA, byte_array, qos=MQTT_QOS)
+        now = get_now_string()
+        print(f"published frame on topic: {MQTT_TOPIC_CAMERA} at {now}")
+        time.sleep(1 / FPS)
+
+
+if __name__ == "__main__":
+    main()
